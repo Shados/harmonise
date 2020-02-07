@@ -1,0 +1,39 @@
+[package]
+name = "harmonise"
+version = "0.1.0"
+authors = ["Alexei Robyn <shados@shados.net>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-trait = "0.1"
+clap = "2"
+dirs = "2"
+exit = "0.2"
+exit-code = "1"
+futures = "0.3"
+lazy_static = "1"
+num_cpus = "1"
+rand = "0.7"
+serde = { version = "1", features = [ "derive" ] }
+serde_regex = "0.4"
+slog = "2"
+slog-async = "2"
+slog-scope = "4"
+slog-scope-futures = "0.1"
+slog-stdlog = "4"
+slog-term = "2"
+sc = "0.2"
+snafu = { version = "0.6", features = [ "futures" ] }
+structopt = "0.3"
+toml = "0.5"
+
+  [dependencies.regex]
+  version = "1"
+  default-features = false
+  features = [ "std", "perf" ] # Don't need full unicode support, we're only doing regex ops on OsStr, using ASCII patterns
+
+  [dependencies.tokio]
+  version = "0.2"
+  features = [ "macros", "rt-threaded", "fs", "io-driver", "io-util", "process", "stream", "sync" ]
