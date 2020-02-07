@@ -13,12 +13,10 @@ extern crate tokio;
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
-use std::fmt::Display;
 use std::fs::Metadata;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -27,10 +25,7 @@ use exit::{Exit, ExitDisplay};
 use futures::stream::{self, Stream, StreamExt, TryStreamExt};
 use rand::{thread_rng, Rng};
 use regex::bytes::Regex; // NOTE: &[u8] Regex, not &str
-use serde::{
-    de::{self, Deserialize},
-    Deserializer,
-};
+use serde::de::{self, Deserialize};
 use slog::{Drain, LevelFilter};
 use slog_async;
 use slog_scope_futures::FutureExt;
