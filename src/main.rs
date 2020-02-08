@@ -42,6 +42,14 @@ use tokio::{fs, io, process::Command, runtime::Builder, sync::mpsc, task};
 // TODO Chuck the tempdir in the ReifiedConfig as well
 // TODO Check for presence of a config file in the 'source' directory, prefer it above the XDG
 // config file
+// TODO Configure the ffmpeg CLI options, as well as the output format
+// TODO use rio for async IO once io_uring supports lstat, readdir, and rename; do copy via
+// sendfile?
+// TODO explicitly check whether any output directory is on a different filesystem to the tmpdir,
+// and fail if so?
+//    - or just explicitly handle the error for that on rename() failing?
+//    - .raw_os_error() = Some(18) in that case; errno 18 == EXDEV
+// TODO Handle symlinks in the input?
 
 const TMP_DIR_NAME: &str = ".harmonise_tmp";
 const TMP_FILE_RETRIES: usize = 8;
