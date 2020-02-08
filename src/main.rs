@@ -1,6 +1,8 @@
 #![feature(async_closure)]
 #![feature(result_map_or_else)]
 #[macro_use]
+extern crate if_chain;
+#[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate sc;
@@ -45,10 +47,6 @@ use tokio::{fs, io, process::Command, runtime::Builder, sync::mpsc, task};
 // TODO Configure the ffmpeg CLI options, as well as the output format
 // TODO use rio for async IO once io_uring supports lstat, readdir, and rename; do copy via
 // sendfile?
-// TODO explicitly check whether any output directory is on a different filesystem to the tmpdir,
-// and fail if so?
-//    - or just explicitly handle the error for that on rename() failing?
-//    - .raw_os_error() = Some(18) in that case; errno 18 == EXDEV
 // TODO Handle symlinks in the input?
 
 const TMP_DIR_NAME: &str = ".harmonise_tmp";
@@ -743,19 +741,31 @@ async fn harmonise(
             fs::copy(&job.source, &tmp_path)
                 .await
                 .context(HarmoniseCopy {
-                    from: job.source,
+                    from: job.source.clone(),
                     to: tmp_path.clone(),
                 })?;
         }
     };
 
     // Move the output file from the temp path to the final path
-    fs::rename(&tmp_path, &job.output)
-        .await
-        .context(HarmoniseTmpMove {
-            from: tmp_path,
-            to: job.output.clone(),
-        })?;
+    fs::rename(&tmp_path, &job.output).await.map_err(|err| {
+        if_chain! {
+            if let Some(errno) = err.raw_os_error();
+            if errno == 18;
+            then {
+                Error::HarmoniseTmpMoveMount {
+                    from: tmp_path,
+                    to: job.output.clone(),
+                }
+            } else {
+                Error::HarmoniseTmpMove {
+                    from: tmp_path,
+                    to: job.output.clone(),
+                    source: err,
+                }
+            }
+        }
+    })?;
 
     info!(log, "Harmonised output file {}", job.output.display());
     Ok(())
@@ -1045,6 +1055,11 @@ enum Error {
         from: PathBuf,
         to: PathBuf,
         source: io::Error,
+    },
+    #[snafu(display("Failed to move temporary file for harmonise job, because the 'from' and 'to' directories are on different filesystems:\n\t\tFrom: {}\n\t\tTo: {}", from.display(), to.display()))]
+    HarmoniseTmpMoveMount {
+        from: PathBuf,
+        to: PathBuf,
     },
     #[snafu(display(
         "Failed to create temporary file `{}` for harmonise job: {}",
