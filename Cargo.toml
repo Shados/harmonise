@@ -14,6 +14,7 @@ dirs = "2"
 exit = "0.2"
 exit-code = "1"
 if_chain = "1"
+filetime = "0.2"
 futures = "0.3"
 lazy_static = "1"
 num_cpus = "1"
@@ -38,4 +39,4 @@ toml = "0.5"
 
   [dependencies.tokio]
   version = "0.2"
-  features = [ "macros", "rt-threaded", "fs", "io-driver", "io-util", "process", "stream", "sync" ]
+  features = [ "blocking", "macros", "rt-threaded", "fs", "io-driver", "io-util", "process", "stream", "sync" ]

@@ -24,6 +24,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use clap::arg_enum;
 use exit::{Exit, ExitDisplay};
+use filetime::FileTime;
 use futures::stream::{self, Stream, StreamExt, TryStreamExt};
 use rand::{thread_rng, Rng};
 use regex::bytes::Regex; // NOTE: &[u8] Regex, not &str
@@ -48,6 +49,15 @@ use tokio::{fs, io, process::Command, runtime::Builder, sync::mpsc, task};
 // TODO use rio for async IO once io_uring supports lstat, readdir, and rename; do copy via
 // sendfile?
 // TODO Handle symlinks in the input?
+// TODO smart progress reporting, rather than log output
+// - (jobs completed)/(running tally of jobs queued)
+// - change colour of the "total jobs queued" once the scan is done
+// TODO make the modified time of transcoded files equal to that of their source; this means that
+//      time-based synchronisation to the target mobile device will be incremental even if the
+//      output library has been destroyed and recreated. It also means that the output is truly
+//      idempotent.
+// TODO an option for copying additional filetypes (for lyrics, cover art, etc.)?
+// - Maybe take a list of  name-matching regex instead of just an extension?
 
 const TMP_DIR_NAME: &str = ".harmonise_tmp";
 const TMP_FILE_RETRIES: usize = 8;
@@ -425,7 +435,7 @@ async fn scan_one(
     to_visit: &mut Vec<ScanJob>,
 ) -> Result<(), Error> {
     let log = slog_scope::logger();
-    info!(log, "Scanning and comparing source vs output",);
+    debug!(log, "Scanning and comparing source vs output",);
 
     // Scan both directories and get their files' metadata
     let (source_map, mut output_map) =
@@ -575,7 +585,7 @@ async fn dispatch_harmonise_jobs(
                                 .context(ScanSourceFileModifiedTime {
                                     path: source_path.clone(),
                                 })?;
-                        source_time > out_time
+                        source_time != out_time
                     }
                 }
             };
@@ -726,7 +736,7 @@ async fn harmonise(
                 .context(HarmoniseFfmpegSpawn)?;
             let status = proc.await.context(HarmoniseFfmpegWait)?;
             if !status.success() {
-                return Err(Error::FfmpegFailed { status, job });
+                return Err(Error::HarmoniseFfmpegFailed { status, job });
             } else {
                 debug!(log, "Transcoded to temporary file {}", tmp_path.display());
             };
@@ -746,6 +756,9 @@ async fn harmonise(
                 })?;
         }
     };
+
+    // Ensure the timestamp of the harmonised file matches that of the original
+    copy_file_times(&job.source, &tmp_path).await?;
 
     // Move the output file from the temp path to the final path
     fs::rename(&tmp_path, &job.output).await.map_err(|err| {
@@ -773,6 +786,8 @@ async fn harmonise(
 
 // Ensures the temporary file is unique by retrying up to TMP_FILE_RETRIES times on create_new()
 // failure
+// TODO replace by using upstream tempfile, and just calling into_path() on the resulting
+// Drop-implementing TempFile object?
 async fn temp_file_path(tmpdir: Arc<TempDir>) -> Result<PathBuf, Error> {
     let mut opts = fs::OpenOptions::new();
     opts.write(true).create_new(true);
@@ -924,6 +939,43 @@ fn raw_ioprio_set(which: i32, who: usize, prio: usize) -> usize {
         syscall!(IOPRIO_SET, which, who, prio) as usize
     }
 }
+
+async fn copy_file_times<P>(from: P, to: P) -> Result<(), Error>
+where
+    P: AsRef<Path>,
+{
+    let (from, to) = (from.as_ref().to_owned(), to.as_ref()).to_owned();
+    let metadata = fs::metadata(&from)
+        .await
+        .context(HarmoniseFileTimesMetadata { path: from.clone() })?;
+    let access = FileTime::from_last_access_time(&metadata);
+    let modified = FileTime::from_last_modification_time(&metadata);
+    set_file_times(to, access, modified)
+        .await
+        .context(HarmoniseFileTimesSet { path: to })
+}
+
+async fn set_file_times<P>(path: P, access: FileTime, modified: FileTime) -> Result<(), io::Error>
+where
+    P: AsRef<Path>,
+{
+    let path = path.as_ref().to_owned();
+    async_io(move || filetime::set_file_times(path, access, modified)).await
+}
+
+async fn async_io<F, R>(f: F) -> tokio::io::Result<R>
+where
+    F: FnOnce() -> tokio::io::Result<R> + Send + 'static,
+    R: Send + 'static,
+{
+    match task::spawn_blocking(f).await {
+        Ok(res) => res,
+        Err(err) => Err(tokio::io::Error::new(
+            tokio::io::ErrorKind::Other,
+            format!("failure in task wrapper for blocking closure: {:?}", err),
+        )),
+    }
+}
 // }}}
 
 // Error type and related {{{
@@ -1040,9 +1092,19 @@ enum Error {
         source: tokio::io::Error,
     },
     #[snafu(display("ffmpeg exited with non-zero status '{}' for job {:?}", status, job))]
-    FfmpegFailed {
+    HarmoniseFfmpegFailed {
         status: std::process::ExitStatus,
         job: HarmoniseJob,
+    },
+    #[snafu(display("Failed to read metadata from `{}`: {}", path.display(), source))]
+    HarmoniseFileTimesMetadata {
+        path: PathBuf,
+        source: tokio::io::Error,
+    },
+    #[snafu(display("Failed to set access and modified time on `{}`: {}", path.display(), source))]
+    HarmoniseFileTimesSet {
+        path: PathBuf,
+        source: tokio::io::Error,
     },
     #[snafu(display("Failed to copy file for harmonise job:\n\t\tFrom: {}\n\t\tTo: {}\n\t{}", from.display(), to.display(), source))]
     HarmoniseCopy {
